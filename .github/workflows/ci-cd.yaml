@@ -1,0 +1,197 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  NODE_VERSION: '18.x'
+  DOCKER_REGISTRY: docker.io
+
+jobs:
+  # Testing Job
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: |
+          backend/package-lock.json
+          frontend/package-lock.json
+    
+    - name: Install Backend Dependencies
+      run: |
+        cd backend
+        npm ci
+    
+    - name: Install Frontend Dependencies
+      run: |
+        cd frontend
+        npm ci
+    
+    - name: Run Backend Tests
+      env:
+        MONGODB_URI: mongodb://localhost:27017/codespace_test
+        JWT_SECRET: test_secret_key
+      run: |
+        cd backend
+        npm test -- --coverage
+    
+    - name: Run Frontend Tests
+      run: |
+        cd frontend
+        npm test -- --coverage --watchAll=false
+    
+    - name: Upload Coverage
+      uses: codecov/codecov-action@v3
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        files: ./backend/coverage/lcov.info,./frontend/coverage/lcov.info
+
+  # Code Quality Job
+  code-quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: SonarCloud Scan
+      uses: SonarSource/sonarcloud-github-action@master
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  # Build Job
+  build:
+    name: Build Docker Images
+    needs: [test]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+    
+    - name: Build and Push Backend
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile.backend
+        push: true
+        tags: |
+          ${{ secrets.DOCKER_USERNAME }}/codespace-backend:latest
+          ${{ secrets.DOCKER_USERNAME }}/codespace-backend:${{ github.sha }}
+        cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/codespace-backend:buildcache
+        cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/codespace-backend:buildcache,mode=max
+    
+    - name: Build and Push Frontend
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile.frontend
+        push: true
+        tags: |
+          ${{ secrets.DOCKER_USERNAME }}/codespace-frontend:latest
+          ${{ secrets.DOCKER_USERNAME }}/codespace-frontend:${{ github.sha }}
+        cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/codespace-frontend:buildcache
+        cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/codespace-frontend:buildcache,mode=max
+
+  # Security Scan Job
+  security:
+    name: Security Scan
+    needs: [build]
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: '${{ secrets.DOCKER_USERNAME }}/codespace-backend:${{ github.sha }}'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+    
+    - name: Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  # Deploy to Staging
+  deploy-staging:
+    name: Deploy to Staging
+    needs: [build, security]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+    
+    steps:
+    - name: Deploy to Staging Server
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.STAGING_HOST }}
+        username: ${{ secrets.STAGING_USER }}
+        key: ${{ secrets.STAGING_SSH_KEY }}
+        script: |
+          cd /opt/codespace
+          docker-compose pull
+          docker-compose up -d
+          docker system prune -f
+
+  # Deploy to Production
+  deploy-production:
+    name: Deploy to Production
+    needs: [build, security]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    
+    steps:
+    - name: Deploy to Production Server
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.PRODUCTION_HOST }}
+        username: ${{ secrets.PRODUCTION_USER }}
+        key: ${{ secrets.PRODUCTION_SSH_KEY }}
+        script: |
+          cd /opt/codespace
+          docker-compose pull
+          docker-compose up -d
+          docker system prune -f
+    
+    - name: Notify Deployment
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        text: 'Production deployment completed!'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+      if: always()
