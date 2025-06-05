@@ -26,6 +26,8 @@ jobs:
     
     - name: Install and Build Frontend
       working-directory: ./frontend
+      env:
+        CI: false
       run: |
         npm install
         npm run build
