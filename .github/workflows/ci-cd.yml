@@ -1,0 +1,86 @@
+# .github/workflows/ci-cd.yml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  NODE_VERSION: '18.x'
+
+jobs:
+  test:
+    name: Test Backend and Frontend
+    runs-on: ubuntu-latest
+    
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: |
+          backend/package-lock.json
+          frontend/package-lock.json
+    
+    - name: Install backend dependencies
+      working-directory: ./backend
+      run: npm ci
+    
+    - name: Install frontend dependencies
+      working-directory: ./frontend
+      run: npm ci
+    
+    - name: Run backend tests
+      working-directory: ./backend
+      env:
+        NODE_ENV: test
+        MONGODB_URI: mongodb://localhost:27017/test_db
+        JWT_SECRET: test_secret_key
+      run: npm test -- --passWithNoTests
+    
+    - name: Run frontend tests
+      working-directory: ./frontend
+      run: npm test -- --passWithNoTests --watchAll=false
+
+  build:
+    name: Build and Push Docker Images
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+    
+    - name: Build and push backend
+      run: |
+        docker build -f Dockerfile.backend -t ${{ secrets.DOCKER_USERNAME }}/codespace-backend:latest .
+        docker push ${{ secrets.DOCKER_USERNAME }}/codespace-backend:latest
+    
+    - name: Build and push frontend
+      run: |
+        docker build -f Dockerfile.frontend -t ${{ secrets.DOCKER_USERNAME }}/codespace-frontend:latest .
+        docker push ${{ secrets.DOCKER_USERNAME }}/codespace-frontend:latest
