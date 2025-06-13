@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { body, validationResult } = require('express-validator');
-const axios = require('axios');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const Code = require('../models/Code');
 const { protect } = require('../middleware/auth');
 
@@ -186,7 +186,7 @@ router.delete('/:id', protect, async (req, res) => {
 });
 
 // @route   POST /api/code/:id/analyze
-// @desc    Analyze code with AI
+// @desc    Analyze code with AI (Google Gemini)
 // @access  Private
 router.post('/:id/analyze', protect, async (req, res) => {
   try {
@@ -211,7 +211,7 @@ router.post('/:id/analyze', protect, async (req, res) => {
     };
 
     const prompt = `${languagePrompts[code.language] || 'Analyze this code:'}
-    
+
 ${code.code}
 
 Please provide:
@@ -219,21 +219,17 @@ Please provide:
 2. Potential bugs or issues
 3. Performance considerations
 4. Best practice recommendations
-5. Security considerations (if applicable)`;
+5. Security considerations (if applicable)
 
-    // Call Ollama API
-    const ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
-    const ollamaModel = process.env.OLLAMA_MODEL || 'codellama:7b';
+Format your response in clear sections with specific examples.`;
 
-    const response = await axios.post(`${ollamaUrl}/api/generate`, {
-      model: ollamaModel,
-      prompt,
-      stream: false
-    }, {
-      timeout: 120000 // 2 minute timeout
-    });
+    // Initialize Gemini AI
+    const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-    const analysis = response.data.response;
+    // Generate analysis
+    const result = await model.generateContent(prompt);
+    const analysis = result.response.text();
 
     // Save analysis
     await code.addAnalysis(analysis);
@@ -244,11 +240,19 @@ Please provide:
     });
   } catch (error) {
     console.error('Analysis error:', error);
-    if (error.code === 'ECONNREFUSED') {
+    
+    if (error.message?.includes('API_KEY')) {
       return res.status(503).json({ 
-        error: 'AI service is not available. Please ensure Ollama is running.' 
+        error: 'AI service configuration error. Please check API key.' 
       });
     }
+    
+    if (error.message?.includes('quota')) {
+      return res.status(429).json({ 
+        error: 'AI service quota exceeded. Please try again later.' 
+      });
+    }
+    
     res.status(500).json({ error: 'Failed to analyze code' });
   }
 });

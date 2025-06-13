@@ -31,7 +31,9 @@ import {
   Rating,
   Tabs,
   Tab,
-  Divider
+  Divider,
+  Breadcrumbs,
+  Link
 } from '@mui/material';
 import {
   Dashboard as DashboardIcon,
@@ -45,7 +47,9 @@ import {
   Logout as LogoutIcon,
   Delete as DeleteIcon,
   TrendingUp as TrendingUpIcon,
-  TrendingDown as TrendingDownIcon
+  TrendingDown as TrendingDownIcon,
+  ArrowBack as ArrowBackIcon,
+  NavigateNext as NavigateNextIcon
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
@@ -75,10 +79,11 @@ export default function TeacherDashboard() {
   const [studentSearch, setStudentSearch] = useState('');
   const [totalStudents, setTotalStudents] = useState(0);
   
-  // Selected student codes
+  // Selected student codes - IMPROVED WORKFLOW
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [studentCodes, setStudentCodes] = useState([]);
   const [codesLoading, setCodesLoading] = useState(false);
+  const [gradingMode, setGradingMode] = useState(false); // New state for grading workflow
   
   // Dialogs
   const [viewCodeDialog, setViewCodeDialog] = useState({ open: false, code: null });
@@ -144,6 +149,21 @@ export default function TeacherDashboard() {
     } finally {
       setCodesLoading(false);
     }
+  };
+
+  // NEW: Start grading workflow
+  const startGradingForStudent = (student) => {
+    setGradingMode(true);
+    setActiveTab(3); // Switch to grading tab
+    fetchStudentCodes(student._id);
+  };
+
+  // NEW: Exit grading mode
+  const exitGradingMode = () => {
+    setGradingMode(false);
+    setSelectedStudent(null);
+    setStudentCodes([]);
+    setActiveTab(1); // Go back to students tab
   };
 
   const handleAddFeedback = async () => {
@@ -232,17 +252,38 @@ export default function TeacherDashboard() {
         </Button>
       </Box>
 
-      {/* Tabs */}
-      <Paper sx={{ mb: 3 }}>
-        <Tabs value={activeTab} onChange={(e, v) => setActiveTab(v)}>
-          <Tab label="Overview" icon={<DashboardIcon />} iconPosition="start" />
-          <Tab label="Students" icon={<PeopleIcon />} iconPosition="start" />
-          <Tab label="Analytics" icon={<AssessmentIcon />} iconPosition="start" />
-        </Tabs>
-      </Paper>
+      {/* Breadcrumb for grading mode */}
+      {gradingMode && selectedStudent && (
+        <Box sx={{ mb: 3 }}>
+          <Breadcrumbs separator={<NavigateNextIcon fontSize="small" />}>
+            <Link 
+              component="button" 
+              variant="body1" 
+              onClick={exitGradingMode}
+              sx={{ textDecoration: 'none' }}
+            >
+              Students
+            </Link>
+            <Typography color="text.primary">
+              {selectedStudent.username}'s Submissions
+            </Typography>
+          </Breadcrumbs>
+        </Box>
+      )}
+
+      {/* Tabs - Hide when in grading mode */}
+      {!gradingMode && (
+        <Paper sx={{ mb: 3 }}>
+          <Tabs value={activeTab} onChange={(e, v) => setActiveTab(v)}>
+            <Tab label="Overview" icon={<DashboardIcon />} iconPosition="start" />
+            <Tab label="Students & Grading" icon={<PeopleIcon />} iconPosition="start" />
+            <Tab label="Analytics" icon={<AssessmentIcon />} iconPosition="start" />
+          </Tabs>
+        </Paper>
+      )}
 
       {/* Overview Tab */}
-      {activeTab === 0 && (
+      {activeTab === 0 && !gradingMode && (
         <>
           {/* Stats Cards */}
           <Grid container spacing={3} sx={{ mb: 4 }}>
@@ -377,9 +418,18 @@ export default function TeacherDashboard() {
         </>
       )}
 
-      {/* Students Tab */}
-      {activeTab === 1 && (
+      {/* Students & Grading Tab - IMPROVED */}
+      {activeTab === 1 && !gradingMode && (
         <Paper sx={{ p: 2 }}>
+          <Box sx={{ mb: 3 }}>
+            <Typography variant="h6" gutterBottom>
+              Students & Grading
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Select a student to view and grade their code submissions
+            </Typography>
+          </Box>
+
           <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <TextField
               placeholder="Search students..."
@@ -407,37 +457,61 @@ export default function TeacherDashboard() {
                   <TableCell>Username</TableCell>
                   <TableCell>Email</TableCell>
                   <TableCell>Submissions</TableCell>
+                  <TableCell>Graded</TableCell>
+                  <TableCell>Pending Review</TableCell>
                   <TableCell>Last Active</TableCell>
-                  <TableCell>Last Submission</TableCell>
                   <TableCell>Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {students.map((student) => (
                   <TableRow key={student._id}>
-                    <TableCell>{student.username}</TableCell>
-                    <TableCell>{student.email}</TableCell>
-                    <TableCell>{student.submissionCount}</TableCell>
-                    <TableCell>{format(new Date(student.lastActive), 'MMM dd, yyyy')}</TableCell>
                     <TableCell>
-                      {student.lastSubmission
-                        ? format(new Date(student.lastSubmission), 'MMM dd, yyyy')
-                        : 'No submissions'}
+                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                        <Avatar sx={{ mr: 2, width: 32, height: 32 }}>
+                          {student.username.charAt(0).toUpperCase()}
+                        </Avatar>
+                        {student.username}
+                      </Box>
                     </TableCell>
+                    <TableCell>{student.email}</TableCell>
+                    <TableCell>
+                      <Chip 
+                        label={student.submissionCount || 0} 
+                        color={student.submissionCount > 0 ? 'primary' : 'default'}
+                        size="small"
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Chip 
+                        label={student.gradedCount || 0} 
+                        color="success"
+                        size="small"
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Chip 
+                        label={(student.submissionCount || 0) - (student.gradedCount || 0)} 
+                        color="warning"
+                        size="small"
+                      />
+                    </TableCell>
+                    <TableCell>{format(new Date(student.lastActive), 'MMM dd, yyyy')}</TableCell>
                     <TableCell>
                       <Button
                         size="small"
-                        onClick={() => {
-                          setActiveTab(2);
-                          fetchStudentCodes(student._id);
-                        }}
+                        variant="contained"
+                        startIcon={<GradeIcon />}
+                        onClick={() => startGradingForStudent(student)}
+                        disabled={!student.submissionCount}
                       >
-                        View Codes
+                        Grade Work
                       </Button>
                       <IconButton
                         size="small"
                         color="error"
                         onClick={() => setDeleteDialog({ open: true, userId: student._id })}
+                        sx={{ ml: 1 }}
                       >
                         <DeleteIcon />
                       </IconButton>
@@ -462,14 +536,23 @@ export default function TeacherDashboard() {
         </Paper>
       )}
 
-      {/* Analytics Tab */}
-      {activeTab === 2 && selectedStudent ? (
+      {/* GRADING MODE - Student's Submissions */}
+      {gradingMode && selectedStudent && (
         <Paper sx={{ p: 3 }}>
           <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Typography variant="h6">
-              {selectedStudent.username}'s Submissions
-            </Typography>
-            <Button onClick={() => setSelectedStudent(null)}>
+            <Box>
+              <Typography variant="h5" gutterBottom>
+                {selectedStudent.username}'s Code Submissions
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {studentCodes.length} submission(s) • Click on any submission to view and grade
+              </Typography>
+            </Box>
+            <Button 
+              variant="outlined" 
+              startIcon={<ArrowBackIcon />}
+              onClick={exitGradingMode}
+            >
               Back to Students
             </Button>
           </Box>
@@ -478,14 +561,28 @@ export default function TeacherDashboard() {
             <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
               <CircularProgress />
             </Box>
+          ) : studentCodes.length === 0 ? (
+            <Alert severity="info">
+              This student hasn't submitted any code yet.
+            </Alert>
           ) : (
             <Grid container spacing={3}>
               {studentCodes.map((code) => (
-                <Grid item xs={12} md={6} key={code._id}>
-                  <Card>
+                <Grid item xs={12} md={6} lg={4} key={code._id}>
+                  <Card 
+                    sx={{ 
+                      height: '100%',
+                      cursor: 'pointer',
+                      '&:hover': { 
+                        boxShadow: 3,
+                        transform: 'translateY(-2px)',
+                        transition: 'all 0.2s'
+                      }
+                    }}
+                  >
                     <CardContent>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
-                        <Typography variant="h6" gutterBottom>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', mb: 2 }}>
+                        <Typography variant="h6" noWrap>
                           {code.title}
                         </Typography>
                         <Chip
@@ -495,34 +592,52 @@ export default function TeacherDashboard() {
                         />
                       </Box>
                       
-                      <Typography variant="body2" color="text.secondary" paragraph>
-                        Language: {code.language.toUpperCase()}
-                      </Typography>
-                      
-                      <Typography variant="body2" color="text.secondary">
-                        Submitted: {format(new Date(code.createdAt), 'MMM dd, yyyy HH:mm')}
-                      </Typography>
-                      
-                      {code.feedback && (
-                        <Box sx={{ mt: 2 }}>
-                          <Alert severity="success">
-                            Feedback provided
-                            {code.feedback.grade && ` - Grade: ${code.feedback.grade}/100`}
-                          </Alert>
-                        </Box>
+                      <Box sx={{ mb: 2 }}>
+                        <Chip 
+                          label={code.language.toUpperCase()} 
+                          size="small" 
+                          sx={{ mr: 1 }} 
+                        />
+                        <Typography variant="caption" color="text.secondary">
+                          {format(new Date(code.createdAt), 'MMM dd, yyyy HH:mm')}
+                        </Typography>
+                      </Box>
+
+                      {code.description && (
+                        <Typography variant="body2" color="text.secondary" paragraph noWrap>
+                          {code.description}
+                        </Typography>
                       )}
                       
-                      <Box sx={{ mt: 2, display: 'flex', gap: 1 }}>
+                      {code.feedback ? (
+                        <Alert severity="success" sx={{ mb: 2 }}>
+                          <Typography variant="body2">
+                            ✓ Graded
+                            {code.feedback.grade && ` - ${code.feedback.grade}/100`}
+                          </Typography>
+                        </Alert>
+                      ) : (
+                        <Alert severity="warning" sx={{ mb: 2 }}>
+                          <Typography variant="body2">
+                            ⏳ Awaiting feedback
+                          </Typography>
+                        </Alert>
+                      )}
+                      
+                      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                         <Button
                           size="small"
                           variant="outlined"
+                          startIcon={<ViewIcon />}
                           onClick={() => setViewCodeDialog({ open: true, code })}
+                          fullWidth
                         >
                           View Code
                         </Button>
                         <Button
                           size="small"
                           variant="contained"
+                          startIcon={<GradeIcon />}
                           onClick={() => {
                             setFeedbackDialog({ open: true, code });
                             setFeedbackForm({
@@ -530,8 +645,10 @@ export default function TeacherDashboard() {
                               grade: code.feedback?.grade || null
                             });
                           }}
+                          fullWidth
+                          color={code.feedback ? 'secondary' : 'primary'}
                         >
-                          {code.feedback ? 'Update' : 'Add'} Feedback
+                          {code.feedback ? 'Update Grade' : 'Add Grade'}
                         </Button>
                       </Box>
                     </CardContent>
@@ -541,7 +658,10 @@ export default function TeacherDashboard() {
             </Grid>
           )}
         </Paper>
-      ) : activeTab === 2 && (
+      )}
+
+      {/* Analytics Tab */}
+      {activeTab === 2 && !gradingMode && (
         <Paper sx={{ p: 3 }}>
           <Typography variant="h6" gutterBottom>
             Language Distribution
@@ -565,7 +685,7 @@ export default function TeacherDashboard() {
                     ))}
                   </Pie>
                   <Tooltip />
-                  <Legend />
+                  {/* Legend removed - labels on pie slices are sufficient */}
                 </PieChart>
               </ResponsiveContainer>
             </Grid>
@@ -589,6 +709,7 @@ export default function TeacherDashboard() {
         </Paper>
       )}
 
+      {/* All the existing dialogs remain the same */}
       {/* View Code Dialog */}
       <Dialog
         open={viewCodeDialog.open}
@@ -597,7 +718,7 @@ export default function TeacherDashboard() {
         fullWidth
       >
         <DialogTitle>
-          {viewCodeDialog.code?.title} - {viewCodeDialog.code?.user?.username}
+          {viewCodeDialog.code?.title} - {viewCodeDialog.code?.user?.username || selectedStudent?.username}
         </DialogTitle>
         <DialogContent>
           {viewCodeDialog.code && (
@@ -628,6 +749,21 @@ export default function TeacherDashboard() {
           <Button onClick={() => setViewCodeDialog({ open: false, code: null })}>
             Close
           </Button>
+          {viewCodeDialog.code && (
+            <Button 
+              variant="contained"
+              onClick={() => {
+                setFeedbackDialog({ open: true, code: viewCodeDialog.code });
+                setFeedbackForm({
+                  comment: viewCodeDialog.code.feedback?.comment || '',
+                  grade: viewCodeDialog.code.feedback?.grade || null
+                });
+                setViewCodeDialog({ open: false, code: null });
+              }}
+            >
+              Grade This Code
+            </Button>
+          )}
         </DialogActions>
       </Dialog>
 
@@ -639,7 +775,7 @@ export default function TeacherDashboard() {
         fullWidth
       >
         <DialogTitle>
-          {feedbackDialog.code?.feedback ? 'Update' : 'Add'} Feedback
+          {feedbackDialog.code?.feedback ? 'Update' : 'Add'} Feedback - {feedbackDialog.code?.title}
         </DialogTitle>
         <DialogContent>
           <TextField
@@ -650,6 +786,7 @@ export default function TeacherDashboard() {
             value={feedbackForm.comment}
             onChange={(e) => setFeedbackForm({ ...feedbackForm, comment: e.target.value })}
             sx={{ mt: 2, mb: 2 }}
+            placeholder="Provide constructive feedback on the code quality, structure, and improvements..."
           />
           <TextField
             fullWidth
@@ -658,6 +795,7 @@ export default function TeacherDashboard() {
             value={feedbackForm.grade || ''}
             onChange={(e) => setFeedbackForm({ ...feedbackForm, grade: e.target.value ? parseInt(e.target.value) : null })}
             inputProps={{ min: 0, max: 100 }}
+            placeholder="Enter a grade between 0-100"
           />
         </DialogContent>
         <DialogActions>
